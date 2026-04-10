@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"slices"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/tg123/go-htpasswd"
@@ -98,6 +99,14 @@ func (c *config) readCredentials() (oa *oauth2.Config) {
 		log.Fatalln(err)
 	}
 	return
+}
+
+func (c *config) hasGmailInsertScope(username, password string) bool {
+	return c.Htpasswd.Match(username, password) && slices.Contains(c.Google.Scopes.Gmail.Insert, username)
+}
+
+func (c *config) hasGmailSendScope(username, password string) bool {
+	return c.Htpasswd.Match(username, password) && slices.Contains(c.Google.Scopes.Gmail.Send, username)
 }
 
 type users struct {
