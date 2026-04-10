@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -23,47 +24,102 @@ func main() {
 	var (
 		doAuth     bool
 		configPath string
-		credsPath  string
-		tokensPath string
 	)
 	flag.BoolVar(&doAuth, "auth", false, "Request access and refresh tokens from Google instead of running the service, and write the tokens to the tokens path.")
 	flag.StringVar(&configPath, "config", "", "Path to the configuration file.")
-	flag.StringVar(&credsPath, "creds", "", "Path to the JSON credentials file obtained from Google.")
-	flag.StringVar(&tokensPath, "tokens", "", "Path to the file containing access and refresh tokens written in auth mode.")
 	flag.Parse()
 
 	if configPath == "" {
 		log.Fatalln("Missing path to configuration file.")
-	} else if credsPath == "" {
-		log.Fatalln("Missing path to credentials file.")
-	} else if tokensPath == "" {
-		log.Fatalln("Missing path to tokens file.")
 	}
 
-	oa := readCredentials(credsPath)
-	if doAuth {
-		doRequestAuth(ctx, oa, tokensPath)
-	} else {
-		cfg := readConfig(configPath)
-		fmt.Println(cfg)
-	}
-}
-
-func readCredentials(path string) (oa *oauth2.Config) {
-	creds, err := os.ReadFile(path)
+	var cfg config
+	b, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	oa, err = google.ConfigFromJSON(creds, gmail.GmailInsertScope, gmail.GmailSendScope)
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		log.Fatalln(err)
+	}
+
+	if doAuth {
+		doRequestAuth(ctx, &cfg)
+	} else {
+		doListenAndServe(ctx, &cfg)
+	}
+}
+
+type config struct {
+	Htpasswd users
+	Google   struct {
+		Credentials string
+		Tokens      string
+		Scopes      struct {
+			Gmail struct {
+				Insert []string
+				Send   []string
+			}
+		}
+	}
+	Http struct {
+		Address string
+	}
+	Smtp struct {
+		Address string
+	}
+}
+
+func (c *config) validateForAuth() error {
+	if c.Google.Credentials == "" {
+		return errors.New("Missing path to Google credentials file.")
+	}
+	if c.Google.Tokens == "" {
+		return errors.New("Missing path to Google tokens file.")
+	}
+	return nil
+}
+
+func (c *config) validateForServe() error {
+	if c.Http.Address == "" && c.Smtp.Address == "" {
+		return errors.New("No HTTP or SMTP listener is configured. There is nothing to do.")
+	}
+	return nil
+}
+
+func (c *config) readCredentials() (oa *oauth2.Config) {
+	b, err := os.ReadFile(c.Google.Credentials)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	oa, err = google.ConfigFromJSON(b, gmail.GmailInsertScope, gmail.GmailSendScope)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	return
 }
 
+type users struct {
+	*htpasswd.File
+}
+
+func (u *users) UnmarshalText(b []byte) (err error) {
+	badLineHandler := func(err error) {
+		log.Println("Bad line in htpasswd block:", err)
+	}
+	u.File, err = htpasswd.NewFromReader(bytes.NewReader(b), htpasswd.DefaultSystems, badLineHandler)
+	return
+}
+
 // Run in request tokens mode.
-func doRequestAuth(ctx context.Context, oa *oauth2.Config, outPath string) {
+func doRequestAuth(ctx context.Context, cfg *config) {
+	if err := cfg.validateForAuth(); err != nil {
+		log.Fatalln("Error in configuration file:", err)
+	}
+
+	oa := cfg.readCredentials()
+
 	authURL := oa.AuthCodeURL("", oauth2.AccessTypeOffline)
 	fmt.Println("Navigate to the following URL in your browser:")
 	fmt.Println(authURL)
@@ -97,55 +153,22 @@ func doRequestAuth(ctx context.Context, oa *oauth2.Config, outPath string) {
 	}
 	fmt.Println("")
 
-	if err := os.WriteFile(outPath, b, 0600); err != nil {
+	path := cfg.Google.Tokens
+	if err := os.WriteFile(path, b, 0600); err != nil {
 		log.Fatalln("Error writing tokens to output file:", err)
 	}
 	fmt.Println("")
-	fmt.Println("Tokens successfully saved to ", outPath, ".")
+	fmt.Println("Tokens successfully saved to ", path, ".")
 }
 
-func readConfig(path string) (cfg config) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalln(err)
+// Run in listen-and-serve mode.
+func doListenAndServe(_ context.Context, cfg *config) {
+	if err := cfg.validateForServe(); err != nil {
+		log.Fatalln("Error in configuration file:", err)
 	}
-
-	if err := toml.Unmarshal(b, &cfg); err != nil {
-		log.Fatalln(err)
-	}
-
-	if cfg.Http.Address == "" && cfg.Smtp.Address == "" {
-		log.Fatalln("No HTTP or SMTP listener is configured. There is nothing to do.")
-	} else if cfg.Htpasswd.File == nil {
+	if cfg.Htpasswd.File == nil {
 		log.Println("WARNING: htpasswd block is not configured. Authentication will be disabled.")
 	}
-	return
-}
 
-type config struct {
-	Htpasswd users
-	Scopes   struct {
-		Gmail struct {
-			Insert []string
-			Send   []string
-		}
-	}
-	Http struct {
-		Address string
-	}
-	Smtp struct {
-		Address string
-	}
-}
-
-type users struct {
-	*htpasswd.File
-}
-
-func (u *users) UnmarshalText(b []byte) (err error) {
-	badLineHandler := func(err error) {
-		log.Println("Bad line in htpasswd block:", err)
-	}
-	u.File, err = htpasswd.NewFromReader(bytes.NewReader(b), htpasswd.DefaultSystems, badLineHandler)
-	return
+	fmt.Println(cfg)
 }
