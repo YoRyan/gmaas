@@ -81,8 +81,8 @@ func TestServeConfigNoAuthSmtp(t *testing.T) {
 func TestGmailInsertNotAuthorized(t *testing.T) {
 	cfg := &config{}
 	cfg.Htpasswd = makeHtpasswd(t, []string{"AzureDiamond"})
-	if got := cfg.hasGmailInsertScope("AzureDiamond", htpasswdPassword); got {
-		t.Errorf("hasGmailInsertScope() = %v; want %v", got, false)
+	if got, want := cfg.hasGmailInsertScope("AzureDiamond", htpasswdPassword), false; got != want {
+		t.Errorf("hasGmailInsertScope() = %v; want %v", got, want)
 	}
 }
 
@@ -90,16 +90,16 @@ func TestGmailInsertAuthorized(t *testing.T) {
 	cfg := &config{}
 	cfg.Google.Scopes.Gmail.Insert = []string{"AzureDiamond"}
 	cfg.Htpasswd = makeHtpasswd(t, []string{"AzureDiamond"})
-	if got := cfg.hasGmailInsertScope("AzureDiamond", htpasswdPassword); !got {
-		t.Errorf("hasGmailInsertScope() = %v; want %v", got, true)
+	if got, want := cfg.hasGmailInsertScope("AzureDiamond", htpasswdPassword), true; got != want {
+		t.Errorf("hasGmailInsertScope() = %v; want %v", got, want)
 	}
 }
 
 func TestGmailSendNotAuthorized(t *testing.T) {
 	cfg := &config{}
 	cfg.Htpasswd = makeHtpasswd(t, []string{"AzureDiamond"})
-	if got := cfg.hasGmailSendScope("AzureDiamond", htpasswdPassword); got {
-		t.Errorf("hasGmailSendScope() = %v; want %v", got, false)
+	if got, want := cfg.hasGmailSendScope("AzureDiamond", htpasswdPassword), false; got != want {
+		t.Errorf("hasGmailSendScope() = %v; want %v", got, want)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestGmailSendAuthorized(t *testing.T) {
 	cfg := &config{}
 	cfg.Google.Scopes.Gmail.Send = []string{"AzureDiamond"}
 	cfg.Htpasswd = makeHtpasswd(t, []string{"AzureDiamond"})
-	if got := cfg.hasGmailSendScope("AzureDiamond", htpasswdPassword); !got {
-		t.Errorf("hasGmailSendScope() = %v; want %v", got, true)
+	if got, want := cfg.hasGmailSendScope("AzureDiamond", htpasswdPassword), true; got != want {
+		t.Errorf("hasGmailSendScope() = %v; want %v", got, want)
 	}
 }
