@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"net/mail"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -172,7 +173,7 @@ func TestAppriseFilterSetsBody(t *testing.T) {
 	msg, _ := mail.ReadMessage(strings.NewReader(gm.Envelope))
 	body, _ := io.ReadAll(msg.Body)
 
-	if got, want := strings.TrimSpace(string(body)), "Hello, World!"; got != want {
+	if got, want := string(body), "Hello, World!"; got != want {
 		t.Errorf("gm.Envelope.Body = %s; want %s", got, want)
 	}
 }
@@ -200,7 +201,7 @@ func TestAppriseFilterSetsBodyType(t *testing.T) {
 	msg, _ := mail.ReadMessage(strings.NewReader(gm.Envelope))
 	body, _ := io.ReadAll(msg.Body)
 
-	if got, want := strings.TrimSpace(string(body)), "<p>This is my message: <strong>Hello, World!</strong></p>"; got != want {
+	if got, want := string(body), "<p>This is my message: <strong>Hello, World!</strong></p>"; got != want {
 		t.Errorf("gm.Envelope.Body = %s; want %s", got, want)
 	}
 	if got, want := msg.Header.Get("Content-type"), "text/html"; got != want {
@@ -337,5 +338,44 @@ func TestAppriseConvertsMarkdown(t *testing.T) {
 	}
 	if got, want := msg.Header.Get("Content-type"), "text/html"; got != want {
 		t.Errorf("gm.Envelope.Header.Content-type = %s; want %s", got, want)
+	}
+}
+
+// (This test isn't terribly thorough as I'm not interested in writing a multipart parser.)
+func TestAppriseSendsAttachments(t *testing.T) {
+	attachments := []struct {
+		Filename string
+		Base64   string
+		Mimetype string
+	}{
+		{Filename: "hello.txt", Base64: "SGVsbG8sIFdvcmxkIQ==", Mimetype: "text/plain"},
+		{Filename: "lorem.json", Base64: "eyJtZXNzYWdlIjoiTG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2NpbmcgZWxpdCwgc2VkIGRvIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBhbGlxdWEuIn0=", Mimetype: "application/json"},
+	}
+	gm, _ := appriseToGmail(apprise{
+		Version:     "1.0",
+		Title:       "Hello, World!",
+		Message:     "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+		Format:      "text",
+		Attachments: attachments,
+		Type:        "info",
+	}, "", []appriseFilter{})
+	msg, _ := mail.ReadMessage(strings.NewReader(gm.Envelope))
+	body, _ := io.ReadAll(msg.Body)
+	s := string(body)
+
+	if got, want := strings.Contains(s, "Lorem ipsum dolor sit amet"), true; got != want {
+		t.Errorf("strings.Contains(s, Lorem ipsum dolor sit amet) = %v; want %v", got, want)
+	}
+	if got, want := strings.Contains(s, url.QueryEscape("hello.txt")), true; got != want {
+		t.Errorf("strings.Contains(s, hello.txt) = %v; want %v", got, want)
+	}
+	if got, want := strings.Contains(s, "SGVsbG8sIFdvcmxkIQ=="), true; got != want {
+		t.Errorf("strings.Contains(s, base64(hello.txt)) = %v; want %v", got, want)
+	}
+	if got, want := strings.Contains(s, url.QueryEscape("lorem.json")), true; got != want {
+		t.Errorf("strings.Contains(s, lorem.json) = %v; want %v", got, want)
+	}
+	if got, want := strings.Contains(s, "eyJtZXNzYWdlIjoiTG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2NpbmcgZWxpdCwgc2VkIGRvIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBhbGlxdWEuIn0="), true; got != want {
+		t.Errorf("strings.Contains(s, base64(lorem.json)) = %v; want %v", got, want)
 	}
 }

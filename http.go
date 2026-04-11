@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"text/template"
 
 	"github.com/gomarkdown/markdown"
 	"google.golang.org/api/gmail/v1"
 )
+
+const appriseMultipartBoundary = "boundary_Dck6sCYmj104WHZsXuwTkU7kfQRq0oLJ"
 
 type apprise struct {
 	Version string
@@ -113,16 +116,42 @@ func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailM
 		}
 	}
 
-	if bodyType != "" {
-		headers["Content-type"] = bodyType
-	}
-
 	var sb strings.Builder
-	for k, v := range headers {
-		fmt.Fprintf(&sb, "%s: %s\n", k, v)
+	if len(a.Attachments) > 0 {
+		// Multipart body with attachments.
+		headers["Content-type"] = fmt.Sprintf("multipart/mixed; boundary=\"%s\"", appriseMultipartBoundary)
+		for k, v := range headers {
+			fmt.Fprintf(&sb, "%s: %s\n", k, v)
+		}
+
+		// Write the notification message as the primary body.
+		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "--%s\n", appriseMultipartBoundary)
+		fmt.Fprintf(&sb, "Content-type: %s\n\n", bodyType)
+		sb.WriteString(body)
+		sb.WriteString("\n")
+
+		// Write the attachments.
+		for _, at := range a.Attachments {
+			fmt.Fprintf(&sb, "--%s\n", appriseMultipartBoundary)
+			fmt.Fprintf(&sb, "Content-type: %s; name=\"%s\"\n", at.Mimetype, url.QueryEscape(at.Filename))
+			sb.WriteString("Content-Transfer-Encoding: base64\n\n")
+			sb.WriteString(at.Base64)
+			sb.WriteString("\n")
+		}
+		fmt.Fprintf(&sb, "--%s--\n", appriseMultipartBoundary)
+	} else {
+		// Single-part body.
+		if bodyType != "" {
+			headers["Content-type"] = bodyType
+		}
+		for k, v := range headers {
+			fmt.Fprintf(&sb, "%s: %s\n", k, v)
+		}
+
+		sb.WriteString("\n")
+		sb.WriteString(body)
 	}
-	sb.WriteString("\n\n")
-	sb.WriteString(body)
 
 	msg.LabelIds = labelIds
 	msg.Envelope = sb.String()
