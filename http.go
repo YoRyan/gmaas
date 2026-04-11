@@ -46,8 +46,9 @@ func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailM
 	case "markdown":
 		defaultMime = "text/html"
 		defaultBody = string(markdown.ToHTML([]byte(a.Message), nil, nil))
-	case "text":
 	default:
+		fallthrough
+	case "text":
 		defaultMime = "text/plain"
 		defaultBody = a.Message
 	}

@@ -35,6 +35,22 @@ func TestAppriseDefaultHeaders(t *testing.T) {
 	}
 }
 
+func TestAppriseDefaultBody(t *testing.T) {
+	gm, _ := appriseToGmail(apprise{
+		Version: "1.0",
+		Title:   "Hello, World!",
+		Message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+		Format:  "text",
+		Type:    "info",
+	}, "AzureDiamond", []appriseFilter{})
+	msg, _ := mail.ReadMessage(strings.NewReader(gm.Envelope))
+	body, _ := io.ReadAll(msg.Body)
+
+	if got, want := string(body), "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."; got != want {
+		t.Errorf("msg.Body = %s; want %s", got, want)
+	}
+}
+
 func TestAppriseDefaultHeadersUnauthenticated(t *testing.T) {
 	gm, _ := appriseToGmail(apprise{
 		Version: "1.0",
