@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -39,6 +40,10 @@ type apprise struct {
 // Converts Apprise payloads to Gmail messages with user-configurable
 // middleware.
 func (a apprise) toGmailMessage(user string, filters []appriseFilter) (msg gmailMessage, err error) {
+	if a.Title == "" && a.Message == "" {
+		return msg, errors.New("Notification is completely empty.")
+	}
+
 	var defaultFrom string
 	if user == "" {
 		defaultFrom = "me"

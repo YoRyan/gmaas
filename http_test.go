@@ -8,6 +8,13 @@ import (
 	"testing"
 )
 
+func TestAppriseFailsWhenEmpty(t *testing.T) {
+	_, err := (apprise{}).toGmailMessage("", []appriseFilter{})
+	if err == nil {
+		t.Error("toGmailMessage() = nil")
+	}
+}
+
 func TestAppriseDefaultHeaders(t *testing.T) {
 	gm, _ := (apprise{
 		Version: "1.0",
