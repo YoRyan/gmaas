@@ -16,11 +16,17 @@ import (
 
 const appriseMultipartBoundary = "boundary_Dck6sCYmj104WHZsXuwTkU7kfQRq0oLJ"
 
+// JSON payload as transmitted by Apprise's custom JSON protocol. It's documented
+// at https://appriseit.com/services/json/, but the plugin source code, which is
+// available at https://github.com/caronc/apprise/blob/master/apprise/plugins/custom_json.py,
+// is a better bet.
 type apprise struct {
 	Version string
 	Title   string
 	Message string
-	// Not an official field. Allows sender to specify "text", "html", or "markdown".
+	// Not an official field. The user would have to inject it by inserting
+	// :format=whatever into their Apprise URL. Allows sender to specify "text",
+	// "html", or "markdown".
 	Format      string
 	Attachments []struct {
 		Filename string
@@ -30,6 +36,8 @@ type apprise struct {
 	Type string
 }
 
+// Converts Apprise payloads to Gmail messages with user-configurable
+// middleware.
 func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailMessage, err error) {
 	var defaultFrom string
 	if user == "" {
@@ -159,6 +167,7 @@ func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailM
 	return
 }
 
+// Runs the HTTP web server.
 func httpListenAndServe(cfg *config, mail *gmail.Service) {
 	http.HandleFunc("/apprise/json", func(w http.ResponseWriter, r *http.Request) {
 		user, pass, _ := r.BasicAuth()

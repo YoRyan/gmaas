@@ -54,6 +54,7 @@ func main() {
 	}
 }
 
+// Global configuration data.
 type config struct {
 	Htpasswd users
 	Google   struct {
@@ -126,6 +127,7 @@ func (c *config) hasGmailSendScope(username, password string) bool {
 	}
 }
 
+// Wrapper for the htpasswd instance. This is necessary to unmarshal it nicely.
 type users struct {
 	*htpasswd.File
 }
@@ -138,6 +140,7 @@ func (u *users) UnmarshalText(b []byte) (err error) {
 	return
 }
 
+// Middleware match block from an Apprise endpoint.
 type appriseFilter struct {
 	Match struct {
 		User   string
@@ -147,13 +150,17 @@ type appriseFilter struct {
 	Output filterOutput
 }
 
+// Middleware output block to Gmail data.
 type filterOutput struct {
 	LabelIds []string
-	Headers  map[string]string
+	// Map from header name to templated value.
+	Headers map[string]string
+	// Templated email body.
 	Body     string
 	BodyType string
 }
 
+// Finalized email message ready for submission to Gmail.
 type gmailMessage struct {
 	LabelIds []string
 	Envelope string
