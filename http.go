@@ -71,8 +71,12 @@ func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailM
 			"To":      "me",
 			"Subject": fmt.Sprintf("[%s] %s", a.Type, a.Title),
 		}
-		body     = defaultBody
-		bodyType = defaultMime
+		body       = defaultBody
+		bodyType   = defaultMime
+		dateSrc    = "receivedTime"
+		neverSpam  = true
+		processCal = false
+		delete     = false
 	)
 
 	for _, f := range filters {
@@ -122,6 +126,18 @@ func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailM
 		if o.BodyType != "" {
 			bodyType = o.BodyType
 		}
+		if o.InternalDateSource != "" {
+			dateSrc = o.InternalDateSource
+		}
+		if o.NeverMarkSpam.isSet() {
+			neverSpam = o.NeverMarkSpam.value()
+		}
+		if o.ProcessForCalendar.isSet() {
+			processCal = o.ProcessForCalendar.value()
+		}
+		if o.Deleted.isSet() {
+			delete = o.Deleted.value()
+		}
 	}
 
 	var sb strings.Builder
@@ -163,6 +179,10 @@ func appriseToGmail(a apprise, user string, filters []appriseFilter) (msg gmailM
 
 	msg.LabelIds = labelIds
 	msg.Envelope = sb.String()
+	msg.InternalDateSource = dateSrc
+	msg.NeverMarkSpam = neverSpam
+	msg.ProcessForCalendar = processCal
+	msg.Deleted = delete
 
 	return
 }

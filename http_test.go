@@ -51,6 +51,28 @@ func TestAppriseDefaultBody(t *testing.T) {
 		t.Errorf("msg.Body = %s; want %s", got, want)
 	}
 }
+func TestAppriseDefaultParameters(t *testing.T) {
+	gm, _ := appriseToGmail(apprise{
+		Version: "1.0",
+		Title:   "Hello, World!",
+		Message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+		Format:  "text",
+		Type:    "info",
+	}, "AzureDiamond", []appriseFilter{})
+
+	if got, want := gm.InternalDateSource, "receivedTime"; got != want {
+		t.Errorf("gm.InternalDateSource = %s; want %s", got, want)
+	}
+	if got, want := gm.NeverMarkSpam, true; got != want {
+		t.Errorf("gm.NeverMarkSpam = %v; want %v", got, want)
+	}
+	if got, want := gm.ProcessForCalendar, false; got != want {
+		t.Errorf("gm.ProcessForCalendar = %v; want %v", got, want)
+	}
+	if got, want := gm.Deleted, false; got != want {
+		t.Errorf("gm.Deleted = %v; want %v", got, want)
+	}
+}
 
 func TestAppriseDefaultHeadersUnauthenticated(t *testing.T) {
 	gm, _ := appriseToGmail(apprise{
@@ -234,6 +256,71 @@ func TestAppriseFilterSetsHeader(t *testing.T) {
 
 	if got, want := msg.Header.Get("Subject"), "[Awesome] Hello, World!"; got != want {
 		t.Errorf("msg.Header.Subject = %s; want %s", got, want)
+	}
+}
+
+func TestAppriseFilterSetsDateSource(t *testing.T) {
+	gm, _ := appriseToGmail(apprise{
+		Version: "1.0",
+		Title:   "Hello, World!",
+		Message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+		Format:  "text",
+		Type:    "info",
+	}, "", []appriseFilter{
+		{
+			Match: struct {
+				User   string
+				Type   string
+				Format string
+			}{Type: "info"},
+			Output: filterOutput{
+				Headers: map[string]string{
+					"Date": "Wed, 1 Apr 2026 22:54:15 +0000",
+				},
+				InternalDateSource: "dateHeader",
+			},
+		},
+	})
+	msg, _ := mail.ReadMessage(strings.NewReader(gm.Envelope))
+
+	if got, want := msg.Header.Get("Date"), "Wed, 1 Apr 2026 22:54:15 +0000"; got != want {
+		t.Errorf("msg.Header.Date = %s; want %s", got, want)
+	}
+	if got, want := gm.InternalDateSource, "dateHeader"; got != want {
+		t.Errorf("gm.InternalDateSource = %s; want %s", got, want)
+	}
+}
+
+func TestAppriseFilterSetsNullableParameters(t *testing.T) {
+	gm, _ := appriseToGmail(apprise{
+		Version: "1.0",
+		Title:   "Hello, World!",
+		Message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+		Format:  "text",
+		Type:    "info",
+	}, "", []appriseFilter{
+		{
+			Match: struct {
+				User   string
+				Type   string
+				Format string
+			}{Type: "info"},
+			Output: filterOutput{
+				NeverMarkSpam:      -1,
+				ProcessForCalendar: 1,
+				Deleted:            1,
+			},
+		},
+	})
+
+	if got, want := gm.NeverMarkSpam, false; got != want {
+		t.Errorf("gm.NeverMarkSpam = %v; want %v", got, want)
+	}
+	if got, want := gm.ProcessForCalendar, true; got != want {
+		t.Errorf("gm.ProcessForCalendar = %v; want %v", got, want)
+	}
+	if got, want := gm.Deleted, true; got != want {
+		t.Errorf("gm.Deleted = %v; want %v", got, want)
 	}
 }
 

@@ -156,22 +156,53 @@ type filterOutput struct {
 	// Map from header name to templated value.
 	Headers map[string]string
 	// Templated email body.
-	Body     string
-	BodyType string
+	Body               string
+	BodyType           string
+	InternalDateSource string
+	NeverMarkSpam      nullableBool
+	ProcessForCalendar nullableBool
+	Deleted            nullableBool
+}
+
+// Like bool, except with a third "null" state for configuration unmarshaling.
+type nullableBool int
+
+func (n *nullableBool) UnmarshalText(b []byte) (err error) {
+	if bytes.Equal(b, []byte("true")) {
+		*n = 1
+	} else if bytes.Equal(b, []byte("false")) {
+		*n = -1
+	} else {
+		*n = 0
+	}
+	return
+}
+
+func (n *nullableBool) isSet() bool {
+	return *n != 0
+}
+
+func (n *nullableBool) value() bool {
+	return *n > 0
 }
 
 // Finalized email message ready for submission to Gmail.
 type gmailMessage struct {
-	LabelIds []string
-	Envelope string
+	LabelIds           []string
+	Envelope           string
+	InternalDateSource string
+	NeverMarkSpam      bool
+	ProcessForCalendar bool
+	Deleted            bool
 }
 
 func (m *gmailMessage) uploadToGmail(mail *gmail.Service) error {
 	r, err := mail.Users.Messages.
 		Import("me", &gmail.Message{LabelIds: append(m.LabelIds, "UNREAD")}).
-		NeverMarkSpam(true).
-		ProcessForCalendar(true).
-		Deleted(false).
+		InternalDateSource(m.InternalDateSource).
+		NeverMarkSpam(m.NeverMarkSpam).
+		ProcessForCalendar(m.ProcessForCalendar).
+		Deleted(m.Deleted).
 		Media(strings.NewReader(m.Envelope), googleapi.ContentType("message/rfc822")).
 		Do()
 	if err != nil {
