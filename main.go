@@ -11,12 +11,15 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/tg123/go-htpasswd"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 )
 
 func main() {
@@ -64,6 +67,9 @@ type config struct {
 		}
 	}
 	Http struct {
+		Apprise struct {
+			Filters []appriseFilter
+		}
 		Address string
 	}
 	Smtp struct {
@@ -82,6 +88,9 @@ func (c *config) validateForAuth() error {
 }
 
 func (c *config) validateForServe() error {
+	if err := c.validateForAuth(); err != nil {
+		return err
+	}
 	if c.Http.Address == "" && c.Smtp.Address == "" {
 		return errors.New("No HTTP or SMTP listener is configured. There is nothing to do.")
 	}
@@ -102,11 +111,19 @@ func (c *config) readCredentials() (oa *oauth2.Config) {
 }
 
 func (c *config) hasGmailInsertScope(username, password string) bool {
-	return c.Htpasswd.Match(username, password) && slices.Contains(c.Google.Scopes.Gmail.Insert, username)
+	if c.Htpasswd.File == nil {
+		return true
+	} else {
+		return c.Htpasswd.Match(username, password) && slices.Contains(c.Google.Scopes.Gmail.Insert, username)
+	}
 }
 
 func (c *config) hasGmailSendScope(username, password string) bool {
-	return c.Htpasswd.Match(username, password) && slices.Contains(c.Google.Scopes.Gmail.Send, username)
+	if c.Htpasswd.File == nil {
+		return true
+	} else {
+		return c.Htpasswd.Match(username, password) && slices.Contains(c.Google.Scopes.Gmail.Send, username)
+	}
 }
 
 type users struct {
@@ -119,6 +136,43 @@ func (u *users) UnmarshalText(b []byte) (err error) {
 	}
 	u.File, err = htpasswd.NewFromReader(bytes.NewReader(b), htpasswd.DefaultSystems, badLineHandler)
 	return
+}
+
+type appriseFilter struct {
+	Match struct {
+		User   string
+		Type   string
+		Format string
+	}
+	Output filterOutput
+}
+
+type filterOutput struct {
+	LabelIds []string
+	Headers  map[string]string
+	Body     string
+}
+
+type gmailMessage struct {
+	LabelIds []string
+	Envelope string
+}
+
+func (m *gmailMessage) uploadToGmail(mail *gmail.Service) error {
+	r, err := mail.Users.Messages.
+		Import("me", &gmail.Message{LabelIds: append(m.LabelIds, "UNREAD")}).
+		NeverMarkSpam(true).
+		ProcessForCalendar(true).
+		Deleted(false).
+		Media(strings.NewReader(m.Envelope), googleapi.ContentType("message/rfc822")).
+		Do()
+	if err != nil {
+		return err
+	}
+	if r.HTTPStatusCode != 200 {
+		return fmt.Errorf("Gmail returned status code: %v", r.HTTPStatusCode)
+	}
+	return nil
 }
 
 // Run in request tokens mode.
@@ -171,7 +225,7 @@ func doRequestAuth(ctx context.Context, cfg *config) {
 }
 
 // Run in listen-and-serve mode.
-func doListenAndServe(_ context.Context, cfg *config) {
+func doListenAndServe(ctx context.Context, cfg *config) {
 	if err := cfg.validateForServe(); err != nil {
 		log.Fatalln("Error in configuration file:", err)
 	}
@@ -179,5 +233,19 @@ func doListenAndServe(_ context.Context, cfg *config) {
 		log.Println("WARNING: htpasswd block is not configured. Authentication will be disabled.")
 	}
 
-	fmt.Println(cfg)
+	oa := cfg.readCredentials()
+
+	f, err := os.Open(cfg.Google.Tokens)
+	if err != nil {
+		log.Fatalln("Failed to open tokens file:", err)
+	}
+
+	var tok oauth2.Token
+	if err := json.NewDecoder(f).Decode(&tok); err != nil {
+		log.Fatalln("Failed to decode tokens file:", err)
+	}
+
+	mail, err := gmail.NewService(ctx, option.WithHTTPClient(oa.Client(ctx, &tok)))
+	go httpListenAndServe(cfg, mail)
+	select {}
 }
