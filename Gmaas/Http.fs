@@ -4,16 +4,16 @@ open Giraffe
 open Google.Apis.Gmail.v1
 open Gmaas.Config
 open Gmaas.Gmail
+open Gmaas.Helpers
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Primitives
 
-let private flattenStrings (sv: StringValues) : string =
-    match sv.Count with
-    | 0 -> ""
-    | 1 -> sv[0]
-    | _ -> sv[sv.Count - 1]
+let private expandHeaders (sv: (string * StringValues) seq) =
+    sv
+    |> Seq.map (fun (k, sv) -> sv |> Seq.cast<string> |> Seq.map (fun s -> k, s))
+    |> Seq.concat
 
 let private ezImportHandler: HttpHandler =
     fun (next: HttpFunc) (ctx: HttpContext) ->
@@ -21,16 +21,9 @@ let private ezImportHandler: HttpHandler =
             let! body = ctx.ReadBodyFromRequestAsync()
 
             let headers =
-                (seq {
-                    "From", "gmaas"
-
-                    yield!
-                        ctx.Request.Headers
-                        |> Seq.map (|KeyValue|)
-                        |> Seq.map (fun (k, sv) -> k, flattenStrings sv)
-
-                    "Content-Type", "text/plain"
-                })
+                seq { "From", "gmaas" }
+                |> overrideHeaders (ctx.Request.Headers |> Seq.map (|KeyValue|) |> expandHeaders |> List.ofSeq)
+                |> overrideHeaders [ "Content-Type", "text/plain" ]
                 |> List.ofSeq
 
             let! _ =
@@ -47,8 +40,7 @@ let private ezImportHandler: HttpHandler =
             return! next ctx
         }
 
-let private webApp =
-    choose [ route "/api/messages/import/ez" >=> ezImportHandler ]
+let private webApp = choose [ route "/api/messages/import/ez" >=> ezImportHandler ]
 
 let serveHttpAsync (config: ServeConfig) =
     task {

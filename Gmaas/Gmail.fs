@@ -1,5 +1,6 @@
 module Gmaas.Gmail
 
+open Gmaas.Helpers
 open Google.Apis.Gmail.v1
 open System
 open System.Buffers.Text
@@ -27,19 +28,11 @@ type Message =
       ProcessForCalendar: bool option
       Deleted: bool option }
 
-/// Remove duplicates from a list of email headers. Later values override prior
-/// ones.
-let private mergeHeaders (headers: (string * string) seq) =
-    headers
-    |> Seq.map (fun (k, v) -> k.Trim().ToLowerInvariant(), v)
-    |> Map.ofSeq
-    |> Map.toSeq
-
 let private makeEnvelope (headers: (string * string) list) (body: Body) : string =
     let body, bodyHeaders =
         match body with
-        | SinglePart s -> s, Seq.empty
-        | MultiPart(contentType, content, []) -> content, seq { "Content-Type", contentType }
+        | SinglePart s -> s, List.empty
+        | MultiPart(contentType, content, []) -> content, [ "Content-Type", contentType ]
         | MultiPart(contentType, content, attachments) ->
             let boundary = $"boundary_{Guid.NewGuid()}"
             let content = $"--{boundary}\nContent-Type: {contentType}\n\n{content}"
@@ -52,14 +45,11 @@ let private makeEnvelope (headers: (string * string) list) (body: Body) : string
                 |> String.concat "\n\n"
 
             $"{content}\n\n{attachments}\n\n--{boundary}--",
-            seq { "Content-Type", "multipart/mixed; boundary=\"{boundary}\"" }
+            [ "Content-Type", "multipart/mixed; boundary=\"{boundary}\"" ]
 
     let headers =
-        seq {
-            yield! bodyHeaders
-            yield! headers
-        }
-        |> mergeHeaders
+        headers
+        |> overrideHeaders bodyHeaders
         |> Seq.map (fun (k, v) -> $"{k}: {v}")
         |> String.concat "\n"
 
