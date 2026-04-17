@@ -1,5 +1,7 @@
 module Gmaas.Http
 
+open System
+open System.IO
 open System.Security.Claims
 open System.Threading.Tasks
 
@@ -8,7 +10,6 @@ open idunno.Authentication.Basic
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.DependencyInjection
-open Microsoft.Extensions.Primitives
 
 open Gmaas.Config
 open Gmaas.Gmail
@@ -25,10 +26,20 @@ module private Roles =
     [<Literal>]
     let gmailSend = "GmailSend"
 
-let private expandHeaders (sv: (string * StringValues) seq) =
-    sv
+let private defaultHeaders (ctx: HttpContext) =
+    seq {
+        "From",
+        (match ctx.User.FindFirst ClaimTypes.NameIdentifier with
+         | null -> "gmaas"
+         | c -> c.Value)
+    }
+
+let private requestHeaders (ctx: HttpContext) =
+    ctx.Request.Headers
+    |> Seq.map (|KeyValue|)
     |> Seq.map (fun (k, sv) -> sv |> Seq.cast<string> |> Seq.map (fun s -> k, s))
     |> Seq.concat
+    |> List.ofSeq
 
 let private ezImportHandler: HttpHandler =
     fun (next: HttpFunc) (ctx: HttpContext) ->
@@ -36,8 +47,8 @@ let private ezImportHandler: HttpHandler =
             let! body = ctx.ReadBodyFromRequestAsync()
 
             let headers =
-                seq { "From", "gmaas" }
-                |> overrideHeaders (ctx.Request.Headers |> Seq.map (|KeyValue|) |> expandHeaders |> List.ofSeq)
+                defaultHeaders ctx
+                |> overrideHeaders (requestHeaders ctx)
                 |> overrideHeaders [ "Content-Type", "text/plain" ]
                 |> List.ofSeq
 
@@ -51,6 +62,59 @@ let private ezImportHandler: HttpHandler =
                       NeverMarkSpam = None
                       ProcessForCalendar = None
                       Deleted = None }
+
+            return! next ctx
+        }
+
+[<CLIMutable>]
+type ImportForm =
+    { LabelId: string list option
+      Body: string option
+      BodyType: string option
+      InternalDateSource: string option
+      NeverMarkSpam: bool option
+      ProcessForCalendar: bool option
+      Deleted: bool option }
+
+let private readAttachment (file: IFormFile) =
+    task {
+        use stream = file.OpenReadStream()
+        use memory = new MemoryStream()
+        do! stream.CopyToAsync memory
+
+        return
+            { ContentType = file.ContentType
+              Filename = file.FileName
+              Base64 = Convert.ToBase64String(memory.ToArray()) }
+    }
+
+let private importHandler: HttpHandler =
+    fun (next: HttpFunc) (ctx: HttpContext) ->
+        task {
+            let! form = ctx.BindFormAsync<ImportForm>()
+
+            let headers =
+                defaultHeaders ctx |> overrideHeaders (requestHeaders ctx) |> List.ofSeq
+
+            let! attachments = ctx.Request.Form.Files |> Seq.map readAttachment |> Task.WhenAll
+
+            let! _ =
+                importToGmail
+                    (ctx.GetService<ServeConfig>().Gmail)
+                    { LabelIds = form.LabelId
+                      Headers = headers
+                      Body =
+                        MultiPart(
+                            form.BodyType |> Option.defaultValue "text/plain",
+                            form.Body |> Option.defaultValue "",
+                            attachments |> List.ofArray
+                        )
+                      InternalDateSource =
+                        form.InternalDateSource
+                        |> Option.bind (parseInternalDateSource >> Result.toOption)
+                      NeverMarkSpam = form.NeverMarkSpam
+                      ProcessForCalendar = form.ProcessForCalendar
+                      Deleted = form.Deleted }
 
             return! next ctx
         }
@@ -69,9 +133,15 @@ let private requiresRole role =
 
 let private webApp =
     choose
-        [ route "/api/messages/import/ez"
-          >=> requiresRole Roles.gmailInsert
-          >=> ezImportHandler ]
+        [ POST
+          >=> choose
+                  [ route "/api/messages/import/ez"
+                    >=> requiresRole Roles.gmailInsert
+                    >=> ezImportHandler
+                    route "/api/messages/import"
+                    >=> requiresRole Roles.gmailInsert
+                    >=> importHandler ]
+          RequestErrors.NOT_FOUND "404" ]
 
 let private validateCredentials (context: ValidateCredentialsContext) =
     let config = context.HttpContext.RequestServices.GetService<ServeConfig>()

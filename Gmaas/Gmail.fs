@@ -10,8 +10,6 @@ open Google.Apis.Gmail.v1
 
 open Gmaas.Helpers
 
-type InternalDateSourceEnum = UsersResource.MessagesResource.ImportRequest.InternalDateSourceEnum
-
 type Attachment =
     { ContentType: string
       Filename: string
@@ -42,12 +40,12 @@ let private makeEnvelope (headers: (string * string) list) (body: Body) : string
             let attachments =
                 attachments
                 |> List.map (fun a ->
-                    let contentType = $"{contentType}; name=\"{HttpUtility.UrlEncode a.Filename}\""
+                    let contentType = $"{a.ContentType}; name=\"{HttpUtility.UrlEncode a.Filename}\""
                     $"--{boundary}\nContent-Type: {contentType}\nContent-Transfer-Encoding: base64\n\n{a.Base64}")
                 |> String.concat "\n\n"
 
             $"{content}\n\n{attachments}\n\n--{boundary}--",
-            [ "Content-Type", "multipart/mixed; boundary=\"{boundary}\"" ]
+            [ "Content-Type", $"multipart/mixed; boundary=\"{boundary}\"" ]
 
     let headers =
         headers
