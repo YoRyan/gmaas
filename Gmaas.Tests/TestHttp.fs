@@ -4,11 +4,13 @@ open System
 open System.Collections.Generic
 open System.Net
 open System.Net.Http
+open System.Net.Http.Headers
 open System.Text
 open System.Threading.Tasks
 
 open Giraffe
 open Google.Apis.Gmail.v1
+open Meziantou.Framework.Http
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.TestHost
 open Microsoft.Extensions.Hosting
@@ -64,12 +66,124 @@ let private mockWithoutAuth () =
 
     config, mock
 
+let private mockWithHunter2Auth (user: string) (hasInsert: bool) (hasSend: bool) =
+    let mock = MockGmailFs()
+
+    let authSet yay =
+        if yay then Set(Seq.singleton user) else Set.empty
+
+    let config =
+        { Htpasswd = Some(HtpasswdFile.Parse($"{user}:$apr1$nKTVHFsh$8gVerNz4iYOp211EbpBpJ0\n"))
+          AuthGmailInsert = authSet hasInsert
+          AuthGmailSend = authSet hasSend
+          AppriseMiddleware = []
+          ShoutrrrMiddleware = []
+          HttpAddress = ""
+          Gmail = mock }
+
+    config, mock
+
+let private makeBasicAuth (user: string) (pass: string) =
+    AuthenticationHeaderValue("Basic", $"{user}:{pass}" |> Encoding.UTF8.GetBytes |> Convert.ToBase64String)
+
 let private makeContent (mime: string) (s: string) =
     let content = new ByteArrayContent(Encoding.UTF8.GetBytes s)
     content.Headers.ContentType <- Headers.MediaTypeHeaderValue mime
     content
 
 let private makeTextContent = makeContent "text/plain"
+
+[<Fact>]
+let ``Authenticated endpoints work when authentication is disabled`` () =
+    let config, _ = mockWithoutAuth ()
+
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+
+    use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    request.Content <- content
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+
+[<Fact>]
+let ``Authenticated endpoints require authentication`` () =
+    let config, _ = mockWithHunter2Auth "AzureDiamond" true true
+
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
+
+    use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    request.Content <- content
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
+
+[<Fact>]
+let ``Authenticated endpoints work with basic authentication`` () =
+    let config, _ = mockWithHunter2Auth "AzureDiamond" true true
+    let authHeader = makeBasicAuth "AzureDiamond" "hunter2"
+
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    request.Headers.Authorization <- authHeader
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+
+    use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    request.Headers.Authorization <- authHeader
+    request.Content <- content
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+
+[<Fact>]
+let ``Authenticated endpoints fail with bad authentication`` () =
+    let config, _ = mockWithHunter2Auth "AzureDiamond" true true
+    let authHeader = makeBasicAuth "AzureDiamond" "whatever"
+
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    request.Headers.Authorization <- authHeader
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
+
+    use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    request.Headers.Authorization <- authHeader
+    request.Content <- content
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
+
+[<Fact>]
+let ``Authenticated import endpoints require the import scope`` () =
+    let config, _ = mockWithHunter2Auth "AzureDiamond" false true
+    let authHeader = makeBasicAuth "AzureDiamond" "hunter2"
+
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    request.Headers.Authorization <- authHeader
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
+
+    use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    request.Headers.Authorization <- authHeader
+    request.Content <- content
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
+
+[<Fact>]
+let ``Minimal import call produces a valid message`` () =
+    let config, mock = mockWithoutAuth ()
+
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let response = testRequest config request
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+
+    let called = mock.CalledMessage.Value
+    let from = getHeader "From" called.Headers
+    Assert.NotEqual(0, from.Length)
+    Assert.NotEqual<string>("", List.head from)
 
 [<Fact>]
 let ``Easy curl import works`` () =
