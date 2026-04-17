@@ -14,6 +14,8 @@ open Google.Apis.Util.Store
 open Meziantou.Framework.Http
 open Tomlyn.Model
 
+open Gmaas.Gmail
+
 [<Literal>]
 let private defaultHttp = "http://[::1]:8080"
 
@@ -55,7 +57,7 @@ type ServeConfig =
       AppriseMiddleware: AppriseMiddleware list
       ShoutrrrMiddleware: ShoutrrrMiddleware list
       HttpAddress: string
-      Gmail: GmailService }
+      Gmail: IGmailFs }
 
 type private CowardlyCodeReceiver() =
     interface ICodeReceiver with
@@ -205,7 +207,7 @@ let loadServeConfig (t: TomlTable) =
                               ShoutrrrMiddleware.Output = output }
                     | _ -> None)
               HttpAddress = http |> Option.bind (inTable "address") |> Option.defaultValue defaultHttp
-              Gmail = new GmailService(initializer) }
+              Gmail = GmailFs(new GmailService(initializer)) }
     }
 
 let doAuthFlow (t: TomlTable) =

@@ -4,6 +4,7 @@ open System
 open System.Buffers.Text
 open System.Collections.Generic
 open System.Text
+open System.Threading.Tasks
 open System.Web
 
 open Google.Apis.Gmail.v1
@@ -55,26 +56,31 @@ let private makeEnvelope (headers: (string * string) list) (body: Body) : string
 
     $"{headers}\n\n{body}\n"
 
-let importToGmail (gmail: GmailService) (msg: Message) =
-    task {
-        let envelope = makeEnvelope msg.Headers msg.Body
-        let data = Data.Message()
-        data.Raw <- Encoding.UTF8.GetBytes envelope |> Base64Url.EncodeToString
+type IGmailFs =
+    abstract member Import: msg: Message -> Task<Data.Message>
 
-        data.LabelIds <-
-            msg.LabelIds
-            |> Option.defaultValue [ "INBOX" ]
-            |> List.insertAt 0 "UNREAD"
-            |> List
+type GmailFs(service: GmailService) =
+    interface IGmailFs with
+        member _.Import(msg: Message) : Task<Data.Message> =
+            task {
+                let envelope = makeEnvelope msg.Headers msg.Body
+                let data = Data.Message()
+                data.Raw <- Encoding.UTF8.GetBytes envelope |> Base64Url.EncodeToString
 
-        let request = gmail.Users.Messages.Import(data, "me")
-        request.NeverMarkSpam <- msg.NeverMarkSpam |> Option.defaultValue true
-        request.ProcessForCalendar <- msg.ProcessForCalendar |> Option.defaultValue false
-        request.Deleted <- msg.Deleted |> Option.defaultValue false
+                data.LabelIds <-
+                    msg.LabelIds
+                    |> Option.defaultValue [ "INBOX" ]
+                    |> List.insertAt 0 "UNREAD"
+                    |> List
 
-        request.InternalDateSource <-
-            msg.InternalDateSource
-            |> Option.defaultValue InternalDateSourceEnum.ReceivedTime
+                let request = service.Users.Messages.Import(data, "me")
+                request.NeverMarkSpam <- msg.NeverMarkSpam |> Option.defaultValue true
+                request.ProcessForCalendar <- msg.ProcessForCalendar |> Option.defaultValue false
+                request.Deleted <- msg.Deleted |> Option.defaultValue false
 
-        return! request.ExecuteAsync()
-    }
+                request.InternalDateSource <-
+                    msg.InternalDateSource
+                    |> Option.defaultValue InternalDateSourceEnum.ReceivedTime
+
+                return! request.ExecuteAsync()
+            }

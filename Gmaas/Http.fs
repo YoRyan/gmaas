@@ -44,17 +44,20 @@ let private requestHeaders (ctx: HttpContext) =
 let private ezImportHandler: HttpHandler =
     fun (next: HttpFunc) (ctx: HttpContext) ->
         task {
-            let! body = ctx.ReadBodyFromRequestAsync()
+            let config = ctx.GetService<ServeConfig>()
 
             let headers =
-                defaultHeaders ctx
+                seq {
+                    yield! defaultHeaders ctx
+                    "Content-Type", "text/plain"
+                }
                 |> overrideHeaders (requestHeaders ctx)
-                |> overrideHeaders [ "Content-Type", "text/plain" ]
                 |> List.ofSeq
 
+            let! body = ctx.ReadBodyFromRequestAsync()
+
             let! _ =
-                importToGmail
-                    (ctx.GetService<ServeConfig>().Gmail)
+                config.Gmail.Import
                     { LabelIds = None
                       Headers = headers
                       Body = SinglePart body
@@ -91,6 +94,7 @@ let private readAttachment (file: IFormFile) =
 let private importHandler: HttpHandler =
     fun (next: HttpFunc) (ctx: HttpContext) ->
         task {
+            let config = ctx.GetService<ServeConfig>()
             let! form = ctx.BindFormAsync<ImportForm>()
 
             let headers =
@@ -99,8 +103,7 @@ let private importHandler: HttpHandler =
             let! attachments = ctx.Request.Form.Files |> Seq.map readAttachment |> Task.WhenAll
 
             let! _ =
-                importToGmail
-                    (ctx.GetService<ServeConfig>().Gmail)
+                config.Gmail.Import
                     { LabelIds = form.LabelId
                       Headers = headers
                       Body =
@@ -131,7 +134,7 @@ let private requiresRole role =
             next
             ctx
 
-let private webApp =
+let webApp =
     choose
         [ POST
           >=> choose
@@ -171,7 +174,7 @@ let private validateCredentials (context: ValidateCredentialsContext) =
 
     Task.CompletedTask
 
-let private configureServices (config: ServeConfig) (services: IServiceCollection) =
+let configureServices (config: ServeConfig) (services: IServiceCollection) =
     let authEvents = BasicAuthenticationEvents()
     authEvents.OnValidateCredentials <- validateCredentials
 
