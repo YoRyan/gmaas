@@ -7,7 +7,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/tg123/go-htpasswd v1.2.4
 	golang.org/x/oauth2 v0.36.0
-	google.golang.org/api v0.275.0
+	google.golang.org/api v0.276.0
 )
 
 require (
