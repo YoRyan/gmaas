@@ -60,7 +60,8 @@ let private mapHeaders (ctx: HttpContext) =
     let contentType =
         contentTypeHeaders
         |> Seq.tryExactlyOne
-        |> Option.bind ((fun (_, v) -> v) >> parseContentType >> Result.toOption)
+        |> Option.map (fun (_, v) -> v)
+        |> Option.bind (parseContentType >> Result.toOption)
 
     headerList, contentType
 
