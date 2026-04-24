@@ -1,4 +1,4 @@
-module Tests.Http
+module Tests.Gmail
 
 open System
 open System.Collections.Generic
@@ -40,7 +40,7 @@ type private MockGmailInbox() =
                 ?neverMarkSpam: bool,
                 ?processForCalendar: bool,
                 ?deleted: bool
-            ) : Task<Data.Message> =
+            ) : Task<unit> =
             use stream = new MemoryStream(message.ToArray())
             let message = MimeMessage.Load stream
 
@@ -53,8 +53,7 @@ type private MockGmailInbox() =
                        ProcessForCalendar = processForCalendar
                        Deleted = deleted |}
 
-            let whatever = Data.Message()
-            Task.FromResult whatever
+            Task.FromResult()
 
         member this.Send(message: ReadOnlySpan<byte>) : Task<Data.Message> = failwith "Not Implemented"
 
@@ -84,12 +83,8 @@ let private mockWithoutAuth () =
 
     let config =
         { Htpasswd = None
-          AuthGmailInsert = Set.empty
-          AuthGmailSend = Set.empty
-          AppriseMiddleware = []
-          ShoutrrrMiddleware = []
           HttpAddress = ""
-          Gmail = mock }
+          Inbox = Gmail(Set.empty, Set.empty, mock) }
 
     config, mock
 
@@ -100,13 +95,9 @@ let private mockWithHunter2Auth (user: string) (hasInsert: bool) (hasSend: bool)
         if yay then Set(Seq.singleton user) else Set.empty
 
     let config =
-        { Htpasswd = Some(HtpasswdFile.Parse($"{user}:$apr1$nKTVHFsh$8gVerNz4iYOp211EbpBpJ0\n"))
-          AuthGmailInsert = authSet hasInsert
-          AuthGmailSend = authSet hasSend
-          AppriseMiddleware = []
-          ShoutrrrMiddleware = []
+        { Htpasswd = Some(HtpasswdFile.Parse $"{user}:$apr1$nKTVHFsh$8gVerNz4iYOp211EbpBpJ0\n")
           HttpAddress = ""
-          Gmail = mock }
+          Inbox = Gmail(authSet hasInsert, authSet hasSend, mock) }
 
     config, mock
 
@@ -129,12 +120,14 @@ let private readEntity (e: MimeEntity) =
 let ``Authenticated endpoints work when authentication is disabled`` () =
     let config, _ = mockWithoutAuth ()
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.OK, response.StatusCode)
 
     use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.OK, response.StatusCode)
@@ -143,12 +136,14 @@ let ``Authenticated endpoints work when authentication is disabled`` () =
 let ``Authenticated endpoints require authentication`` () =
     let config, _ = mockWithHunter2Auth "AzureDiamond" true true
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
 
     use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
@@ -158,13 +153,15 @@ let ``Authenticated endpoints work with basic authentication`` () =
     let config, _ = mockWithHunter2Auth "AzureDiamond" true true
     let authHeader = makeBasicAuth "AzureDiamond" "hunter2"
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     request.Headers.Authorization <- authHeader
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.OK, response.StatusCode)
 
     use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Headers.Authorization <- authHeader
     request.Content <- content
     let response = testRequest config request
@@ -175,13 +172,15 @@ let ``Authenticated endpoints fail with bad authentication`` () =
     let config, _ = mockWithHunter2Auth "AzureDiamond" true true
     let authHeader = makeBasicAuth "AzureDiamond" "whatever"
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     request.Headers.Authorization <- authHeader
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode)
 
     use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Headers.Authorization <- authHeader
     request.Content <- content
     let response = testRequest config request
@@ -192,13 +191,15 @@ let ``Authenticated import endpoints require the import scope`` () =
     let config, _ = mockWithHunter2Auth "AzureDiamond" false true
     let authHeader = makeBasicAuth "AzureDiamond" "hunter2"
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     request.Headers.Authorization <- authHeader
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
 
     use content = new FormUrlEncodedContent(seq { "body", "" } |> Seq.map KeyValuePair)
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Headers.Authorization <- authHeader
     request.Content <- content
     let response = testRequest config request
@@ -208,7 +209,9 @@ let ``Authenticated import endpoints require the import scope`` () =
 let ``Minimal import call produces a valid message`` () =
     let config, mock = mockWithoutAuth ()
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     let response = testRequest config request
     Assert.Equal(HttpStatusCode.OK, response.StatusCode)
 
@@ -223,7 +226,9 @@ let ``Easy curl import works`` () =
         makeTextContent
             "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     request.Content <- content
 
     let response = testRequest config request
@@ -241,7 +246,10 @@ let ``Easy curl import works`` () =
 [<Fact>]
 let ``Easy curl import passes through headers`` () =
     let config, mock = mockWithoutAuth ()
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     request.Headers.Add("To", "bob@example.com")
     request.Headers.Add("Subject", "Hello, World!")
 
@@ -255,7 +263,10 @@ let ``Easy curl import passes through headers`` () =
 [<Fact>]
 let ``Easy curl import passes through Content-Type`` () =
     let config, mock = mockWithoutAuth ()
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import/ez")
+
+    let request =
+        new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import/ez")
+
     request.Headers.Add("To", "bob@example.com")
 
     use content = makeTextContent "Now we have <strong>HTML</strong>!"
@@ -287,7 +298,7 @@ let ``Curl import with application/x-www-form-urlencoded works`` () =
             |> Seq.map KeyValuePair
         )
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
 
     let response = testRequest config request
@@ -318,7 +329,7 @@ let ``Curl import with application/x-www-form-urlencoded works with non-plain bo
             |> Seq.map KeyValuePair
         )
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
 
     let response = testRequest config request
@@ -346,7 +357,7 @@ let ``Curl import with multipart/form-data works`` () =
         } do
         content.Add(makeTextContent v, k)
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
 
     let response = testRequest config request
@@ -373,7 +384,7 @@ let ``Curl import with multipart/form-data works with attachments`` () =
     content.Add(makeContent "application/json" "{\"hello\": \"world\"}", "upload", "hello.json")
     content.Add(makeContent "text/html" "<p>hello <strong>world</strong></p>", "upload2", "hello.html")
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
 
     let response = testRequest config request
@@ -408,7 +419,7 @@ let ``Curl import with multipart/form-data works (sort of) with non-plain body``
     use content = new MultipartFormDataContent()
     content.Add(makeContent "text/html" "Hello, <em>World!</em>", "body")
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
 
     let response = testRequest config request
@@ -428,7 +439,7 @@ let ``Curl import passes through headers`` () =
     use content = new MultipartFormDataContent()
     content.Add(makeTextContent "Hello, World!", "body")
 
-    let request = new HttpRequestMessage(HttpMethod.Post, "/api/messages/import")
+    let request = new HttpRequestMessage(HttpMethod.Post, "/api/gmail/messages/import")
     request.Content <- content
     request.Headers.Add("To", "bob@example.com")
     request.Headers.Add("Subject", "Hello, World!")

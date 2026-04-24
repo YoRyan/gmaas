@@ -7,7 +7,7 @@
 
   <ItemGroup>
     
-    <Compile Include="TestHttp.fs" />
+    <Compile Include="TestGmail.fs" />
   </ItemGroup>
 
   <ItemGroup>

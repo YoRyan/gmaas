@@ -26,6 +26,9 @@ module private Roles =
     [<Literal>]
     let gmailSend = "GmailSend"
 
+    [<Literal>]
+    let imapAppend = "ImapAppend"
+
 let private parseContentType (s: string) =
     let (ok, ct) = ContentType.TryParse(s)
 
@@ -82,7 +85,8 @@ let private ezImportHandler: HttpHandler =
 
             use stream = new MemoryStream()
             do! message.WriteToAsync stream
-            let! _ = config.Gmail.Import(stream.ToArray())
+
+            let! _ = (getGmailInbox config).Import(stream.ToArray())
 
             return! next ctx
         }
@@ -145,19 +149,42 @@ let private importHandler: HttpHandler =
             do! message.WriteToAsync stream
 
             let! _ =
-                config.Gmail.Import(
-                    stream.ToArray(),
-                    ?labelIds = form.LabelId,
-                    ?internalDateSource =
-                        (form.InternalDateSource
-                         |> Option.bind (parseInternalDateSource >> Result.toOption)),
-                    ?neverMarkSpam = form.NeverMarkSpam,
-                    ?processForCalendar = form.ProcessForCalendar,
-                    ?deleted = form.Deleted
-                )
+                (getGmailInbox config)
+                    .Import(
+                        stream.ToArray(),
+                        ?labelIds = form.LabelId,
+                        ?internalDateSource =
+                            (form.InternalDateSource
+                             |> Option.bind (parseInternalDateSource >> Result.toOption)),
+                        ?neverMarkSpam = form.NeverMarkSpam,
+                        ?processForCalendar = form.ProcessForCalendar,
+                        ?deleted = form.Deleted
+                    )
 
             return! next ctx
         }
+
+let private requiresGmail =
+    fun (next: HttpFunc) (ctx: HttpContext) ->
+        let config = ctx.GetService<ServeConfig>()
+
+        (if config.Inbox.IsGmail then
+             id
+         else
+             RequestErrors.GONE "Gmail not configured")
+            next
+            ctx
+
+let private requiresImap =
+    fun (next: HttpFunc) (ctx: HttpContext) ->
+        let config = ctx.GetService<ServeConfig>()
+
+        (if config.Inbox.IsImap then
+             id
+         else
+             RequestErrors.GONE "IMAP not configured")
+            next
+            ctx
 
 let private requiresRole role =
     fun (next: HttpFunc) (ctx: HttpContext) ->
@@ -175,11 +202,13 @@ let webApp =
     choose
         [ POST
           >=> choose
-                  [ route "/api/messages/import/ez"
+                  [ route "/api/gmail/messages/import/ez"
                     >=> requiresRole Roles.gmailInsert
+                    >=> requiresGmail
                     >=> ezImportHandler
-                    route "/api/messages/import"
+                    route "/api/gmail/messages/import"
                     >=> requiresRole Roles.gmailInsert
+                    >=> requiresGmail
                     >=> importHandler ]
           RequestErrors.NOT_FOUND "404" ]
 
@@ -192,16 +221,22 @@ let private validateCredentials (context: ValidateCredentialsContext) =
         | None -> false
 
     if verified then
+        let checkedRole (auth: Set<string>) (role: string) =
+            seq {
+                if auth.Contains context.Username then
+                    ClaimTypes.Role, role
+            }
+
         let claims =
             seq {
                 ClaimTypes.NameIdentifier, context.Username
                 ClaimTypes.Name, context.Username
 
-                if config.AuthGmailInsert.Contains context.Username then
-                    ClaimTypes.Role, Roles.gmailInsert
-
-                if config.AuthGmailSend.Contains context.Username then
-                    ClaimTypes.Role, Roles.gmailSend
+                match config.Inbox with
+                | Gmail(authInsert, authSend, _inbox) ->
+                    yield! checkedRole authInsert Roles.gmailInsert
+                    yield! checkedRole authSend Roles.gmailSend
+                | Imap(authAppend, _inbox) -> yield! checkedRole authAppend Roles.imapAppend
             }
             |> Seq.map (fun (``type``, value) ->
                 Claim(``type``, value, ClaimValueTypes.String, context.Options.ClaimsIssuer))

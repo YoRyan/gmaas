@@ -2,19 +2,15 @@ module ForTheRecord.Config
 
 open System
 open System.IO
-open System.Threading
 open System.Threading.Tasks
 
-open Google.Apis.Auth.OAuth2
-open Google.Apis.Auth.OAuth2.Flows
-open Google.Apis.Auth.OAuth2.Responses
 open Google.Apis.Gmail.v1
 open Google.Apis.Services
-open Google.Apis.Util.Store
 open Meziantou.Framework.Http
 open Tomlyn.Model
 
 open ForTheRecord.Gmail
+open ForTheRecord.Imap
 
 [<Literal>]
 let private defaultHttp = "http://[::1]:8080"
@@ -22,96 +18,14 @@ let private defaultHttp = "http://[::1]:8080"
 [<Literal>]
 let private applicationName = "ForTheRecord"
 
-[<Literal>]
-let private userId = "user"
-
-type GmailOutput =
-    { LabelIds: string list option
-      HeaderTemplates: Map<string, string>
-      BodyTemplate: string option
-      BodyMime: string option
-      InternalDateSource: string option
-      NeverMarkSpam: bool option
-      ProcessForCalendar: bool option
-      Deleted: bool option }
-
-type AppriseMatch =
-    { User: string option
-      Type: string option
-      Format: string option }
-
-type AppriseMiddleware =
-    { Match: AppriseMatch
-      Output: GmailOutput }
-
-type ShoutrrrMatch = { User: string option }
-
-type ShoutrrrMiddleware =
-    { Match: ShoutrrrMatch
-      Output: GmailOutput }
+type ConfiguredInbox =
+    | Gmail of authInsert: Set<string> * authSend: Set<string> * inbox: IGmailInbox
+    | Imap of authAppend: Set<string> * inbox: IImapInbox
 
 type ServeConfig =
     { Htpasswd: HtpasswdFile option
-      AuthGmailInsert: Set<string>
-      AuthGmailSend: Set<string>
-      AppriseMiddleware: AppriseMiddleware list
-      ShoutrrrMiddleware: ShoutrrrMiddleware list
       HttpAddress: string
-      Gmail: IGmailInbox }
-
-type private CowardlyCodeReceiver() =
-    interface ICodeReceiver with
-        member this.ReceiveCodeAsync
-            (url: Requests.AuthorizationCodeRequestUrl, taskCancellationToken: CancellationToken)
-            : Task<Responses.AuthorizationCodeResponseUrl> =
-            failwith "We got asked for an OAuth authorization flow. Aborting!"
-
-        member this.RedirectUri: string = ""
-
-type private TerminalCodeReceiver() =
-    interface ICodeReceiver with
-        member this.ReceiveCodeAsync
-            (url: Requests.AuthorizationCodeRequestUrl, taskCancellationToken: CancellationToken)
-            : Task<Responses.AuthorizationCodeResponseUrl> =
-            task {
-                let prompt = url.Build().AbsoluteUri
-                printfn "Navigate to the following URL in your browser:\n%s" prompt
-
-                printfn
-                    "\nOnce you've authorized the request, your browser will redirect to an http://localhost URL that will fail to load. Paste the entire URL here:"
-
-                let redirect = Uri(Console.ReadLine())
-                let response = AuthorizationCodeResponseUrl redirect.Query
-                printfn "\nOAuth flow completed."
-                return response
-            }
-
-        // We have no intention to actually spin up a web server here, but
-        // Google considers any non-localhost URL "insecure."
-        member this.RedirectUri: string = "http://localhost"
-
-let private loadCredentials
-    (codeReceiver: ICodeReceiver)
-    (file: FileInfo)
-    (store: DirectoryInfo)
-    : Task<UserCredential> =
-    task {
-        let! secrets = GoogleClientSecrets.FromFileAsync file.FullName
-
-        let initializer = GoogleAuthorizationCodeFlow.Initializer()
-        initializer.ClientSecrets <- secrets.Secrets
-        initializer.DataStore <- new FileDataStore(store.FullName, true)
-
-        initializer.Scopes <-
-            seq {
-                GmailService.Scope.GmailInsert
-                GmailService.Scope.GmailSend
-            }
-
-        return!
-            AuthorizationCodeInstalledApp(new GoogleAuthorizationCodeFlow(initializer), codeReceiver)
-                .AuthorizeAsync(userId, CancellationToken.None)
-    }
+      Inbox: ConfiguredInbox }
 
 let private inTable<'T> k (t: TomlTable) =
     if t.ContainsKey k then Some(t.[k] :?> 'T) else None
@@ -123,25 +37,21 @@ let private asTableList (ta: TomlTableArray) : TomlTable list = ta |> Seq.toList
 let private asMap<'V> (t: TomlTable) : Map<string, 'V> =
     t |> Seq.map (|KeyValue|) |> Seq.cast<string * 'V> |> Map.ofSeq
 
-let private loadGmailOutput (t: TomlTable) =
-    { LabelIds = t |> inTable "labelids" |> Option.map asList<string>
-      HeaderTemplates =
-        t
-        |> inTable<TomlTable> "headers"
-        |> Option.map asMap<string>
-        |> Option.defaultValue Map.empty
-      BodyTemplate = t |> inTable<string> "body"
-      BodyMime = t |> inTable<string> "bodytype"
-      InternalDateSource = t |> inTable<string> "internaldatesource"
-      NeverMarkSpam = t |> inTable<bool> "nevermarkspam"
-      ProcessForCalendar = t |> inTable<bool> "processforcalendar"
-      Deleted = t |> inTable<bool> "deleted" }
+let loadServeConfig (loadInboxConfig: TomlTable -> Task<ConfiguredInbox>) (t: TomlTable) =
+    task {
+        let http = t |> inTable "http"
+        let! inbox = loadInboxConfig t
 
-let loadServeConfig (t: TomlTable) =
+        return
+            { Htpasswd = t |> inTable<string> "htpasswd" |> Option.map HtpasswdFile.Parse
+              HttpAddress = http |> Option.bind (inTable "address") |> Option.defaultValue defaultHttp
+              Inbox = inbox }
+    }
+
+let loadGmailConfig (t: TomlTable) =
     task {
         let google = t |> inTable "google"
         let googleScopes = google |> Option.bind (inTable "scopes")
-        let http = t |> inTable "http"
 
         let credentialsFile =
             match google |> Option.bind (inTable "credentials") with
@@ -157,60 +67,38 @@ let loadServeConfig (t: TomlTable) =
         let initializer = BaseClientService.Initializer()
         initializer.HttpClientInitializer <- credentials
         initializer.ApplicationName <- applicationName
+        let service = new GmailService(initializer)
 
-        return
-            { Htpasswd = t |> inTable<string> "htpasswd" |> Option.map HtpasswdFile.Parse
-              AuthGmailInsert =
-                googleScopes
-                |> Option.bind (inTable "gmail")
-                |> Option.bind (inTable "insert")
-                |> Option.map asList
-                |> Option.defaultValue []
-                |> Set.ofList
-              AuthGmailSend =
-                googleScopes
-                |> Option.bind (inTable "gmail")
-                |> Option.bind (inTable "send")
-                |> Option.map asList
-                |> Option.defaultValue []
-                |> Set.ofList
-              AppriseMiddleware =
-                http
-                |> Option.bind (inTable "apprise")
-                |> Option.bind (inTable "middleware")
-                |> Option.map asTableList
-                |> Option.defaultValue []
-                |> List.choose (fun t ->
-                    let mtch = t |> inTable "match"
-                    let output = t |> inTable "output" |> Option.map loadGmailOutput
+        let authInsert =
+            googleScopes
+            |> Option.bind (inTable "gmail")
+            |> Option.bind (inTable "insert")
+            |> Option.map asList
+            |> Option.defaultValue []
+            |> Set.ofList
 
-                    match mtch, output with
-                    | Some mtch, Some output ->
-                        Some
-                            { AppriseMiddleware.Match =
-                                { User = mtch |> inTable "user"
-                                  Type = mtch |> inTable "type"
-                                  Format = mtch |> inTable "format" }
-                              AppriseMiddleware.Output = output }
-                    | _ -> None)
-              ShoutrrrMiddleware =
-                http
-                |> Option.bind (inTable "shoutrrr")
-                |> Option.bind (inTable "middleware")
-                |> Option.map asTableList
-                |> Option.defaultValue []
-                |> List.choose (fun t ->
-                    match t |> inTable "match", t |> inTable "output" |> Option.map loadGmailOutput with
-                    | Some mtch, Some output ->
-                        Some
-                            { ShoutrrrMiddleware.Match = { User = mtch |> inTable "user" }
-                              ShoutrrrMiddleware.Output = output }
-                    | _ -> None)
-              HttpAddress = http |> Option.bind (inTable "address") |> Option.defaultValue defaultHttp
-              Gmail = GmailInbox(new GmailService(initializer)) }
+        let authSend =
+            googleScopes
+            |> Option.bind (inTable "gmail")
+            |> Option.bind (inTable "send")
+            |> Option.map asList
+            |> Option.defaultValue []
+            |> Set.ofList
+
+        return Gmail(authInsert, authSend, GmailInbox service)
     }
 
-let doAuthFlow (t: TomlTable) =
+let getGmailInbox (config: ServeConfig) =
+    match config.Inbox with
+    | Gmail(_authInsert, _authSend, inbox) -> inbox
+    | _ -> raise (InvalidOperationException())
+
+let getImapInbox (config: ServeConfig) =
+    match config.Inbox with
+    | Imap(_authAppend, inbox) -> inbox
+    | _ -> raise (InvalidOperationException())
+
+let testGmail (t: TomlTable) =
     task {
         let google = t |> inTable "google"
 

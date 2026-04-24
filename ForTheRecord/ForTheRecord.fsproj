@@ -8,6 +8,7 @@
   <ItemGroup>
 
     <Compile Include="Gmail.fs" />
+    <Compile Include="Imap.fs" />
     <Compile Include="Config.fs" />
     <Compile Include="Http.fs" />
     <Compile Include="Program.fs" />

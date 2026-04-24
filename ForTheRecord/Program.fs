@@ -7,18 +7,18 @@ open Tomlyn.Model
 open ForTheRecord.Config
 open ForTheRecord.Http
 
-let doAuth (configFile: FileInfo) =
+let doTestGmail (configFile: FileInfo) =
     task {
         use configFile = configFile.Open FileMode.Open
         let config = TomlSerializer.Deserialize<TomlTable> configFile
-        return! doAuthFlow config
+        return! testGmail config
     }
 
-let doServe (configFile: FileInfo) =
+let doServeGmail (configFile: FileInfo) =
     task {
         use configFile = configFile.Open FileMode.Open
         let config = TomlSerializer.Deserialize<TomlTable> configFile
-        let! config = loadServeConfig config
+        let! config = loadServeConfig loadGmailConfig config
 
         do! serveHttpAsync config
     }
@@ -32,22 +32,24 @@ let main arg =
         config.Recursive <- true
 
         let root =
-            System.CommandLine.RootCommand "ForTheRecord: Import notifications into your inbox."
+            System.CommandLine.RootCommand "ForTheRecord: Import notifications into your webmail inbox."
 
         root.Add config
 
-        let auth =
+        let testGmail =
             System.CommandLine.Command(
-                "auth",
+                "test-gmail",
                 "Test the connection to Gmail, obtaining tokens from Google if necessary"
             )
 
-        auth.SetAction(fun result -> (doAuth (result.GetRequiredValue config): Task))
-        root.Subcommands.Add auth
+        testGmail.SetAction(fun result -> (doTestGmail (result.GetRequiredValue config): Task))
+        root.Subcommands.Add testGmail
 
-        let serve = System.CommandLine.Command("serve", "Run the service")
-        serve.SetAction(fun result -> (doServe (result.GetRequiredValue config): Task))
-        root.Subcommands.Add serve
+        let serveGmail =
+            System.CommandLine.Command("serve-gmail", "Run the service using the configured Gmail inbox")
+
+        serveGmail.SetAction(fun result -> (doServeGmail (result.GetRequiredValue config): Task))
+        root.Subcommands.Add serveGmail
 
         return (root.Parse arg).Invoke()
     }
