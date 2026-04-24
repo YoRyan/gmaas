@@ -6,7 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-
     <Compile Include="Mocks.fs" />
     <Compile Include="TestGmail.fs" />
   </ItemGroup>
