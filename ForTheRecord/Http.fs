@@ -265,7 +265,6 @@ let private genericJsonHandler (template: string) : HttpHandler =
             return! handler next ctx
         }
 
-
 let private appriseHandler: HttpHandler =
     genericJsonHandler
         """From: Apprise via ForTheRecord <me>
