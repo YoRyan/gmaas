@@ -28,7 +28,12 @@ type ServeConfig =
       Inbox: ConfiguredInbox }
 
 let private inTable<'T> k (t: TomlTable) =
-    if t.ContainsKey k then Some(t.[k] :?> 'T) else None
+    match t.TryGetValue k with
+    | true, v -> Some v
+    | false, _ -> None
+    |> Option.bind (function
+        | :? 'T as v -> Some v
+        | _ -> None)
 
 let private asList<'T> (a: TomlArray) : 'T list = Seq.cast<'T> a |> Seq.toList
 
