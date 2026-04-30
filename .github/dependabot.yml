@@ -6,7 +6,7 @@
 
 version: 2
 updates:
- - package-ecosystem: "gomod"
+ - package-ecosystem: "dotnet-sdk"
    directory: "/"
    schedule:
      interval: weekly
