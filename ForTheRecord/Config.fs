@@ -10,6 +10,7 @@ open Meziantou.Framework.Http
 open Tomlyn.Model
 
 open ForTheRecord.Gmail
+open ForTheRecord.Helpers
 open ForTheRecord.Imap
 
 [<Literal>]
@@ -25,12 +26,12 @@ type ConfiguredInbox =
 type ServeConfig =
     { Htpasswd: HtpasswdFile option
       HttpAddress: string
+      AppriseTemplates: Map<string, string>
       Inbox: ConfiguredInbox }
 
 let private inTable<'T> k (t: TomlTable) =
-    match t.TryGetValue k with
-    | true, v -> Some v
-    | false, _ -> None
+    t.TryGetValue k
+    |> tryGetOption
     |> Option.bind (function
         | :? 'T as v -> Some v
         | _ -> None)
@@ -40,11 +41,16 @@ let private asList<'T> (a: TomlArray) : 'T list = Seq.cast<'T> a |> Seq.toList
 let private asTableList (ta: TomlTableArray) : TomlTable list = ta |> Seq.toList
 
 let private asMap<'V> (t: TomlTable) : Map<string, 'V> =
-    t |> Seq.map (|KeyValue|) |> Seq.cast<string * 'V> |> Map.ofSeq
+    t
+    |> Seq.map (|KeyValue|)
+    |> Seq.choose (fun (k, v) ->
+        match v with
+        | :? 'V as cast -> Some(k, cast)
+        | _ -> None)
+    |> Map.ofSeq
 
 let loadServeConfig (loadInboxConfig: TomlTable -> Task<ConfiguredInbox>) (t: TomlTable) =
     task {
-        let http = t |> inTable "http"
         let! inbox = loadInboxConfig t
 
         return
@@ -53,7 +59,17 @@ let loadServeConfig (loadInboxConfig: TomlTable -> Task<ConfiguredInbox>) (t: To
                 |> inTable "auth"
                 |> Option.bind (inTable<string> "htpasswd")
                 |> Option.map HtpasswdFile.Parse
-              HttpAddress = http |> Option.bind (inTable "address") |> Option.defaultValue defaultHttp
+              HttpAddress =
+                t
+                |> inTable "http"
+                |> Option.bind (inTable "address")
+                |> Option.defaultValue defaultHttp
+              AppriseTemplates =
+                t
+                |> inTable "apprise"
+                |> Option.bind (inTable "templates")
+                |> Option.map asMap
+                |> Option.defaultValue Map.empty
               Inbox = inbox }
     }
 

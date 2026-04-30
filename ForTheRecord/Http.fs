@@ -18,7 +18,7 @@ open MimeKit
 
 open ForTheRecord.Config
 open ForTheRecord.Gmail
-open ForTheRecord.Liquid
+open ForTheRecord.Helpers
 
 module private Realms =
     [<Literal>]
@@ -218,7 +218,7 @@ let private genericGmailJsonHandler (message: Stream) =
 let private genericImapJsonHandler (message: Stream) : HttpHandler =
     fun (next: HttpFunc) (ctx: HttpContext) -> failwith "Not Implemented"
 
-let private genericJsonHandler (template: string) : HttpHandler =
+let private genericJsonHandler (template: string) (json: JsonElement) : HttpHandler =
     fun (next: HttpFunc) (ctx: HttpContext) ->
         task {
             let config = ctx.GetService<ServeConfig>()
@@ -229,7 +229,6 @@ let private genericJsonHandler (template: string) : HttpHandler =
             if not ok then
                 failwithf "Failed to parse template: %s" error
 
-            let! json = ctx.BindJsonAsync<JsonElement>()
             let json = jsonLiquidModel json
 
             let ftr =
@@ -265,9 +264,27 @@ let private genericJsonHandler (template: string) : HttpHandler =
             return! handler next ctx
         }
 
+let private genericJsonHandlerWithTemplateMap (defaultTemplate: string) (map: Map<string, string>) : HttpHandler =
+    fun (next: HttpFunc) (ctx: HttpContext) ->
+        task {
+            let! json = ctx.BindJsonAsync<JsonElement>()
+
+            let template =
+                tryJsonProperty "ftr_template" json
+                |> Option.map _.ToString()
+                |> Option.map map.TryGetValue
+                |> Option.bind tryGetOption
+                |> Option.defaultValue defaultTemplate
+
+            return! genericJsonHandler template json next ctx
+        }
+
 let private appriseHandler: HttpHandler =
-    genericJsonHandler
-        """From: Apprise via ForTheRecord <me>
+    fun (next: HttpFunc) (ctx: HttpContext) ->
+        let config = ctx.GetService<ServeConfig>()
+
+        genericJsonHandlerWithTemplateMap
+            """From: Apprise via ForTheRecord <me>
 To: me
 Subject: [{{ type }}] {{ title }}
 {% if type == "failure" -%}
@@ -277,7 +294,8 @@ X-FTR-Gmail-LabelID: STARRED
 Content-Type: multipart/mixed; boundary={{ ftr.guid }}
 
 --{{ ftr.guid }}
-{% if forcefarmot == "html" -%}
+{% if ftr_forcefarmot %}{% assign ftr_forceformat = ftr_forcefarmot %}{% endif -%}
+{% if ftr_forceformat == "html" -%}
 Content-Type: text/html
 {% else -%}
 Content-Type: text/plain
@@ -293,6 +311,9 @@ Content-Transfer-Encoding: base64
 {% endfor -%}
 --{{ ftr.guid }}--
 """
+            config.AppriseTemplates
+            next
+            ctx
 
 let webApp =
     choose

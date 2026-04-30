@@ -50,6 +50,7 @@ let private mockWithoutAuth () =
     let config =
         { Htpasswd = None
           HttpAddress = ""
+          AppriseTemplates = Map.empty
           Inbox = Gmail(Set.empty, Set.empty, mock) }
 
     config, mock
@@ -63,6 +64,7 @@ let private mockWithHunter2Auth (user: string) (hasInsert: bool) (hasSend: bool)
     let config =
         { Htpasswd = Some(HtpasswdFile.Parse $"{user}:$apr1$nKTVHFsh$8gVerNz4iYOp211EbpBpJ0\n")
           HttpAddress = ""
+          AppriseTemplates = Map.empty
           Inbox = Gmail(authSet hasInsert, authSet hasSend, mock) }
 
     config, mock
@@ -89,6 +91,7 @@ let ``Endpoints not available when Gmail is not configured`` () =
     let config =
         { Htpasswd = None
           HttpAddress = ""
+          AppriseTemplates = Map.empty
           Inbox = Imap(Set.empty, mock) }
 
     let request =

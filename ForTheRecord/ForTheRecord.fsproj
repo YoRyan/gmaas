@@ -6,10 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Helpers.fs" />
     <Compile Include="Gmail.fs" />
     <Compile Include="Imap.fs" />
     <Compile Include="Config.fs" />
-    <Compile Include="Liquid.fs" />
     <Compile Include="Http.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
