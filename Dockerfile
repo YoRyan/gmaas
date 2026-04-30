@@ -7,9 +7,12 @@ RUN dotnet publish ForTheRecord/ForTheRecord.fsproj -c release -o /app --no-self
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
+COPY --from=build /app /app
 RUN groupadd -r ftr && useradd --no-log-init -r -g ftr ftr
+RUN mkdir -p /google/tokensstore && chown ftr:ftr /google/tokensstore
 USER ftr
 WORKDIR /app
-COPY --from=build /app .
 
+EXPOSE 8080
+VOLUME /google/tokensstore
 ENTRYPOINT ["./ForTheRecord"]
